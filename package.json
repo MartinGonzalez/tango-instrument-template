@@ -1,0 +1,50 @@
+{
+  "name": "{{INSTRUMENT_ID}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "bun node_modules/tango-api/src/cli.ts dev",
+    "build": "bun node_modules/tango-api/src/cli.ts build",
+    "sync": "bun node_modules/tango-api/src/cli.ts sync",
+    "validate": "bun node_modules/tango-api/src/cli.ts validate",
+    "test": "bun test ./test"
+  },
+  "dependencies": {
+    "tango-api": "github:MartinGonzalez/tango-api#{{TANGO_API_TAG}}"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "tango": {
+    "instrument": {
+      "id": "{{INSTRUMENT_ID}}",
+      "name": "{{DISPLAY_NAME}}",
+      "description": "{{DESCRIPTION}}",
+      "group": "Custom",
+      "category": "{{CATEGORY}}",
+      "runtime": "react",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "2.0.0",
+      "launcher": {
+        "sidebarShortcut": {
+          "enabled": true,
+          "label": "{{SIDEBAR_LABEL}}",
+          "icon": "{{ICON}}",
+          "order": 50
+        }
+      },
+      "panels": {
+        "sidebar": true,
+        "first": true,
+        "second": false,
+        "right": false
+      },
+      "permissions": []
+    }
+  }
+}
