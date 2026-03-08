@@ -65,6 +65,42 @@ useHostEvent("instrument.event", useCallback((payload) => {
 
 **NEVER use `api.emit()` to communicate between your own panels — it won't work.**
 
+### Loading states with ctx.emit() (GOTCHA)
+
+`ctx.emit()` events are delivered immediately, BUT if you emit multiple events in rapid succession within a single action handler (e.g., a "loading" event followed by a "loaded" event), React 18 may batch the state updates and only render the final state. The user will never see the loading indicator.
+
+**DON'T do this — loading state will be invisible:**
+```ts
+handler: async (ctx, input) => {
+  ctx.emit({ event: "tickets.loading" });      // React batches this...
+  const tickets = await fetchTickets(input.id);
+  ctx.emit({ event: "tickets.loaded", payload: { tickets } }); // ...with this
+  return { ok: true };
+}
+```
+
+**DO this instead — set loading state in the frontend before calling the action:**
+```tsx
+// Frontend: set loading LOCALLY, then call the backend
+const [loading, setLoading] = useState(false);
+const fetchTickets = useInstrumentAction("fetchTickets");
+
+async function handleClick(id: string) {
+  setLoading(true);                         // Immediate local state
+  await fetchTickets({ id });               // Backend fetches and emits result
+}
+
+// Listen for the result event
+useHostEvent("instrument.event", useCallback((payload) => {
+  if (payload.event === "tickets.loaded") {
+    setTickets(payload.payload.tickets);
+    setLoading(false);                      // Clear loading when data arrives
+  }
+}, []));
+```
+
+**Rule of thumb:** Frontend owns loading/UI state. Backend owns data. Don't try to drive UI state from the backend.
+
 ## Panel slots
 
 Your instrument can render into up to 4 slots:
