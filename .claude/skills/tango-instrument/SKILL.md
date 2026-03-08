@@ -231,19 +231,39 @@ Tango manages the timer lifecycle for you — it pauses when the app is idle and
 
 ## Permissions
 
-Declared in `package.json` under `tango.instrument.permissions`. **Only request what you actually use** — users see these when installing.
+Declared in `package.json` under `tango.instrument.permissions`. **You MUST declare every permission your code uses** — Tango will throw a runtime error if you call an API without the matching permission.
 
-| Permission | When you need it |
-|------------|-----------------|
-| `storage.properties` | Persisting key-value data (settings, preferences, cached state) |
-| `storage.files` | Reading/writing files in instrument-scoped storage |
-| `storage.db` | SQLite database for structured data |
-| `sessions` | Starting Claude sessions, querying Claude, streaming responses |
-| `stages.read` | Reading which project/repo the user has active |
-| `stages.observe` | Reacting to project switches in real-time |
-| `connectors.read` | Checking if Slack/Jira are connected |
-| `connectors.credentials.read` | Accessing OAuth tokens to call external APIs |
-| `connectors.connect` | Triggering the OAuth flow for Slack/Jira |
+**IMPORTANT: When you write code that uses any API or event listed below, ALWAYS add the corresponding permission to `package.json` immediately. Do not wait until the end.**
+
+### API → Required permission mapping
+
+| You use this in your code | You MUST add this permission |
+|--------------------------|------------------------------|
+| `api.storage.getProperty()`, `api.storage.setProperty()`, `api.storage.deleteProperty()` | `storage.properties` |
+| `api.storage.readFile()`, `api.storage.writeFile()`, `api.storage.deleteFile()`, `api.storage.listFiles()` | `storage.files` |
+| `api.storage.sqlQuery()`, `api.storage.sqlExecute()` | `storage.db` |
+| `api.sessions.start()`, `api.sessions.query()`, `api.sessions.sendFollowUp()`, `api.sessions.kill()`, `useSession()` | `sessions` |
+| `useHostEvent("session.stream", ...)`, `useHostEvent("session.ended", ...)` | `sessions` |
+| `api.stages.list()`, `api.stages.active()` | `stages.read` |
+| `useHostEvent("stage.added", ...)`, `useHostEvent("stage.removed", ...)` | `stages.observe` |
+| `api.connectors.listStageConnectors()`, `api.connectors.isAuthorized()` | `connectors.read` |
+| `api.connectors.getCredential()` | `connectors.credentials.read` |
+| `api.connectors.connect()`, `api.connectors.disconnect()` | `connectors.connect` |
+
+### Example
+
+If your instrument reads the active stage and listens for stage changes:
+
+```json
+// package.json → tango.instrument
+"permissions": ["stages.read", "stages.observe"]
+```
+
+```tsx
+// Frontend — this requires BOTH permissions
+const stage = await api.stages.active();           // needs stages.read
+useHostEvent("stage.added", (p) => { /* ... */ }); // needs stages.observe
+```
 
 ## Settings
 
