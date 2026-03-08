@@ -7,7 +7,11 @@ description: Reference for developing this Tango instrument — architecture, AP
 
 You are developing a Tango instrument — a plugin that runs inside the Tango desktop app.
 
-**Docs:** https://tango-app-docs.example.com (TODO: replace with real URL when deployed)
+**Docs:**
+- [Installation](https://martingonzalez.github.io/tango-app/getting-started/installation/)
+- [Tutorials](https://martingonzalez.github.io/tango-app/tutorials/01-hello-world/)
+- [References](https://martingonzalez.github.io/tango-app/reference/manifest/)
+- [UI Components](https://martingonzalez.github.io/tango-app/components/)
 
 ## How instruments work
 
