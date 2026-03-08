@@ -5,276 +5,313 @@ description: Reference for developing this Tango instrument — architecture, AP
 
 # Tango Instrument Development
 
-You are developing a Tango instrument. This is a plugin that runs inside the Tango desktop app. Use this reference to write correct code.
+You are developing a Tango instrument — a plugin that runs inside the Tango desktop app.
 
-## Documentation
+**Docs:** https://tango-app-docs.example.com (TODO: replace with real URL when deployed)
 
-Full docs: https://tango-app-docs.example.com (TODO: replace with real URL)
+## How instruments work
 
-## Architecture
+An instrument has two parts, both optional:
 
-An instrument has two optional parts:
+- **Frontend** (`src/index.tsx`) — React components rendered in panel slots inside Tango's WebKit webview. Everything you import from `"tango-api"`.
+- **Backend** (`src/backend.ts`) — Code that runs in the host Bun process. This is where you do data fetching, heavy computation, file I/O, API calls, timers — anything that shouldn't run in a browser. Import from `"tango-api/backend"`.
 
-- **Frontend** (`src/index.tsx`) — React components that render in panel slots inside Tango's WebKit webview. Imported from `"tango-api"`.
-- **Backend** (`src/backend.ts`) — Runs in the host Bun process. Handles data fetching, heavy logic, and side effects. Imported from `"tango-api/backend"`.
+**When do you need a backend?** If your instrument just displays static UI or reads from Tango's built-in storage, frontend-only is fine. Add a backend when you need to: fetch external APIs, run periodic tasks, process large data, or do anything you wouldn't do in a browser.
 
-### Mandatory rules
+### The golden rules
 
-1. **NEVER poll, fetch, or run timers in the frontend.** The backend owns all data fetching and scheduling.
-2. **Backend pushes data to the frontend via `ctx.emit()`** — the frontend listens with `useHostEvent`.
-3. **Frontend fetches data on mount and on user action only** — never on a timer.
-4. **Every panel component must be wrapped in `<UIRoot>`.**
+1. **The frontend is dumb.** It renders UI and responds to user actions. It does NOT fetch data, poll, or run timers.
+2. **The backend is the brain.** It owns all data fetching, scheduling, and side effects. It pushes data to the frontend via events.
+3. **Every panel component must be wrapped in `<UIRoot>`.** This injects the Tango theme.
 
 ## Panel slots
 
-| Slot | Description |
-|------|-------------|
-| `sidebar` | Left sidebar panel |
-| `first` | Main content area (center-left) |
-| `second` | Secondary content area (center-right) |
-| `right` | Right sidebar panel |
+Your instrument can render into up to 4 slots:
 
-Enable/disable slots in `package.json` under `tango.instrument.panels`.
+| Slot | Where it appears | Common use |
+|------|-----------------|------------|
+| `sidebar` | Left sidebar | Navigation, lists, quick actions |
+| `first` | Center-left main area | Primary content |
+| `second` | Center-right | Secondary/detail view |
+| `right` | Right sidebar | Context panels, settings |
 
-## Frontend
+Enable slots in `package.json` under `tango.instrument.panels`. Only create panel components for slots you enable.
 
-### Entry point (`src/index.tsx`)
+## Frontend guide
 
-Must default-export a definition created by `defineReactInstrument`:
+### Entry point
+
+`src/index.tsx` must default-export a `defineReactInstrument` call:
 
 ```tsx
 import { defineReactInstrument } from "tango-api";
 
 export default defineReactInstrument({
   panels: {
-    sidebar: SidebarPanel,
+    sidebar: SidebarPanel,    // React component for each slot
     first: MainPanel,
   },
   defaults: {
-    visible: { sidebar: true, first: true },
-  },
-  lifecycle: {
-    onStart: async (api) => {},
-    onStop: async () => {},
+    visible: { sidebar: true, first: true },  // Which panels show by default
   },
 });
 ```
 
-### Hooks
+### Choosing the right hook
+
+| You want to... | Use this |
+|----------------|----------|
+| Access storage, sessions, actions, UI utils | `useInstrumentApi()` — returns the full API object |
+| Call a single backend action | `useInstrumentAction("actionName")` — cleaner than `api.actions.call()` |
+| Run a Claude session with streaming | `useSession({ id, persist? })` — manages state, streaming, and persistence |
+| React to host events (stage changes, sessions, backend pushes) | `useHostEvent("eventName", callback)` |
+| Read/write user settings | `useInstrumentSettings()` |
+| Check which panels are visible | `usePanelVisibility()` |
+
+### The API object (`useInstrumentApi()`)
 
 ```tsx
-import {
-  useInstrumentApi,       // Full API object (storage, sessions, actions, etc.)
-  useHostEvent,           // Subscribe to host events
-  useInstrumentAction,    // Shorthand for calling a backend action
-  useSession,             // Managed Claude session with streaming
-  useInstrumentSettings,  // Read/write instrument settings
-  usePanelVisibility,     // Which panels are currently visible
-} from "tango-api";
-```
+const api = useInstrumentApi();
 
-**`useInstrumentApi()`** — Returns the full API:
-- `api.storage` — Key-value, file, and SQLite storage
-- `api.sessions` — Start/query/follow-up Claude sessions
-- `api.actions` — Call backend actions
-- `api.stages` — Read active stage path
-- `api.connectors` — OAuth connectors (Slack, Jira)
-- `api.events` — Subscribe to host events
-- `api.settings` — Read/write instrument settings
-- `api.ui.renderMarkdown(text)` — Render markdown to HTML
-- `api.ui.openUrl(url)` — Open URL externally
-- `api.emit(event)` — Emit custom events
+// Storage — persist instrument data
+await api.storage.getProperty<MyType>("key");
+await api.storage.setProperty("key", value);
 
-**`useHostEvent(eventId, callback)`** — Subscribe to events:
-- `snapshot.update` — Full system snapshot
-- `session.stream` — Claude streaming chunks
-- `session.ended` — Session finished
-- `instrument.event` — Cross-instrument / backend events
-- `stage.added` / `stage.removed` — Stage changes
+// Backend actions — call your backend handlers
+const result = await api.actions.call("myAction", { input: "data" });
 
-**`useInstrumentAction(name)`** — Call a backend action:
-```tsx
-const greet = useInstrumentAction<{ name: string }, { greeting: string }>("hello");
-const result = await greet({ name: "World" });
-```
+// Sessions — interact with Claude
+await api.sessions.start({ prompt: "Help me with...", cwd: "/path" });
 
-**`useSession(opts)`** — Managed Claude session:
-```tsx
-const { send, reset, response, isResponding, loaded } = useSession({
-  id: "my-session",
-  persist: true,
-});
+// UI utilities
+api.ui.openUrl("https://example.com");
+const html = api.ui.renderMarkdown("# Hello");
+
+// Custom events — communicate with other instruments
+api.emit({ event: "my-custom-event", payload: { data } });
 ```
 
 ### UI components
 
-All imported from `"tango-api"`. Use `tui-col` / `tui-row` CSS classes for layout.
+All imported from `"tango-api"`. Build layouts with `tui-col` and `tui-row` CSS classes.
 
-| Component | Key props |
-|-----------|-----------|
-| `UIRoot` | `className?`, `fixed?` — **Required wrapper for every panel** |
-| `UIPanelHeader` | `title`, `subtitle?`, `rightActions?`, `onBack?` |
-| `UISection` | `title?`, `description?` |
-| `UICard` | `className?` |
-| `UIButton` | `label`, `variant?`, `size?`, `icon?`, `onClick?` |
-| `UIIconButton` | `icon`, `label`, `title?`, `variant?`, `onClick?` |
-| `UIBadge` | `label`, `tone?` |
-| `UIEmptyState` | `title`, `description?`, `action?` |
-| `UIInput` | `value?`, `placeholder?`, `onInput?` |
-| `UITextarea` | `value?`, `placeholder?`, `rows?`, `onInput?` |
-| `UISelect` | `options`, `value?`, `onChange?` |
-| `UIDropdown` | `options`, `value?`, `placeholder?`, `onChange?` |
-| `UIToggle` | `label`, `checked?`, `onChange?` |
-| `UICheckbox` | `label`, `checked?`, `onChange?` |
-| `UIRadioGroup` | `name`, `options`, `value?`, `onChange?` |
-| `UISegmentedControl` | `options`, `value?`, `onChange?` |
-| `UIList` / `UIListItem` | List container + rows |
-| `UITabs` | `tabs`, `value?`, `onChange?` |
-| `UIGroup` | Collapsible group with `title`, `expanded?`, `onToggle?` |
-| `UISelectionList` | `items`, `selected`, `multiple?`, `onChange?` |
-| `UIMarkdownRenderer` | `content` |
-| `UILink` | `href`, `label` |
-| `UIKeyValue` | `items: { label, value }[]` |
-| `UIScrollArea` | Scrollable container |
-| `UIIcon` | `name`, `size?` |
+**Layout & structure:**
+`UIRoot` (required wrapper), `UIScrollArea`, `UIPanelHeader`, `UISection`, `UICard`, `UIContainer`, `UIFooter`
 
-**Button variants:** `"primary"` | `"secondary"` | `"ghost"` | `"danger"` | `"success"`
+**Actions:**
+`UIButton` (variants: `primary`, `secondary`, `ghost`, `danger`, `success`), `UIIconButton`, `UILink`
 
-**Badge tones:** `"neutral"` | `"info"` | `"success"` | `"warning"` | `"danger"`
+**Data display:**
+`UIBadge` (tones: `neutral`, `info`, `success`, `warning`, `danger`), `UIKeyValue`, `UIMarkdownRenderer`, `UIInlineCode`, `UIIcon`, `UIEmptyState`
 
-### CSS variables
+**Lists & groups:**
+`UIList` + `UIListItem`, `UIGroup` (collapsible), `UISelectionList`, `UITreeView`
+
+**Forms:**
+`UIInput`, `UITextarea`, `UISelect`, `UIDropdown`, `UIToggle`, `UICheckbox`, `UIRadioGroup`, `UISegmentedControl`
+
+**Navigation:**
+`UITabs`
+
+### Theme CSS variables
+
+Use these for custom styling that respects Tango's dark theme:
 
 ```css
---tui-bg, --tui-bg-secondary, --tui-bg-card, --tui-bg-hover
---tui-text, --tui-text-secondary
---tui-border, --tui-primary
---tui-blue, --tui-green, --tui-amber, --tui-red
+--tui-bg               /* Main background */
+--tui-bg-secondary     /* Subtle background */
+--tui-bg-card          /* Card surfaces */
+--tui-text             /* Primary text */
+--tui-text-secondary   /* Muted text */
+--tui-border           /* Borders */
+--tui-primary          /* Accent color */
 ```
 
-## Backend
+## Backend guide
 
-### Entry point (`src/backend.ts`)
+### Entry point
 
-Must default-export a definition created by `defineBackend`:
+`src/backend.ts` must default-export a `defineBackend` call:
 
 ```ts
 import { defineBackend, type InstrumentBackendContext } from "tango-api/backend";
 
 export default defineBackend({
   kind: "tango.instrument.backend.v2",
-  onStart: async (ctx) => { /* initialize */ },
-  onStop: async () => { /* cleanup */ },
+
+  onStart: async (ctx) => {
+    ctx.logger.info("Instrument started");
+    // Initialize state, start subscriptions, etc.
+  },
+
+  onStop: async () => {
+    // Clean up resources
+  },
+
   actions: {
-    myAction: {
-      input: { type: "object", properties: { name: { type: "string" } } },
-      output: { type: "object", properties: { result: { type: "string" } } },
+    fetchItems: {
+      input: { type: "object", properties: { query: { type: "string" } } },
+      output: { type: "object", properties: { items: { type: "array" } } },
       handler: async (ctx, input) => {
-        return { result: `Hello ${input.name}` };
+        const items = await fetchFromApi(input.query);
+        return { items };
       },
     },
   },
 });
 ```
 
-### Backend context (`ctx`)
+### The backend context (`ctx`)
 
-- `ctx.instrumentId` — This instrument's ID
-- `ctx.permissions` — Granted permissions
-- `ctx.emit({ event, payload? })` — Push data to frontend
-- `ctx.logger.info/warn/error(msg)` — Logging
-- `ctx.host.storage` — Storage API (same as frontend)
-- `ctx.host.sessions` — Sessions API
-- `ctx.host.connectors` — Connectors API
-- `ctx.host.stages` — Stages API
-- `ctx.host.settings` — Settings API
+- `ctx.emit({ event, payload? })` — **This is how you talk to the frontend.** Push data updates, status changes, anything.
+- `ctx.logger.info/warn/error(msg)` — Structured logging
+- `ctx.instrumentId` — Your instrument's ID
+- `ctx.host.storage` — Same storage API as frontend
+- `ctx.host.sessions` — Start Claude sessions from the backend
+- `ctx.host.settings` — Read instrument settings
 
-### Backend → Frontend communication pattern
+### Pattern: Backend pushes data, frontend listens
+
+This is the core pattern for any instrument that fetches data:
 
 ```ts
-// Backend: emit event when data changes
-ctx.emit({ event: "data.updated", payload: { items } });
+// Backend — fetch and push
+actions: {
+  refresh: {
+    handler: async (ctx) => {
+      const data = await fetchLatestData();
+      ctx.emit({ event: "data.updated", payload: { data } });
+      return { ok: true };
+    },
+  },
+},
 
-// Frontend: listen and update UI
-useHostEvent("instrument.event", (payload) => {
-  if (payload.event === "data.updated") {
-    setItems(payload.payload.items);
-  }
-});
+// Frontend — listen and render
+function MainPanel() {
+  const [data, setData] = useState(null);
+  const refresh = useInstrumentAction("refresh");
+
+  useHostEvent("instrument.event", useCallback((payload) => {
+    if (payload.event === "data.updated") {
+      setData(payload.payload.data);
+    }
+  }, []));
+
+  useEffect(() => { refresh(); }, []);  // Fetch on mount
+
+  return (
+    <UIRoot>
+      <UIPanelHeader title="My Data" rightActions={
+        <UIIconButton icon="refresh" label="Refresh" onClick={() => refresh()} />
+      } />
+      {data ? <DataView data={data} /> : <UIEmptyState title="Loading..." />}
+    </UIRoot>
+  );
+}
 ```
+
+### Background refresh
+
+If your instrument needs periodic data updates (e.g., polling an API every minute), don't build your own timer. Use the built-in background refresh:
+
+```json
+// In package.json → tango.instrument
+"backgroundRefresh": { "intervalMs": 60000 }
+```
+
+```ts
+// In backend
+onBackgroundRefresh: async (ctx) => {
+  const data = await fetchLatestData();
+  ctx.emit({ event: "data.refreshed", payload: data });
+},
+```
+
+Tango manages the timer lifecycle for you — it pauses when the app is idle and resumes when active.
 
 ## Permissions
 
-Declared in `package.json` under `tango.instrument.permissions`. Only request what you need.
+Declared in `package.json` under `tango.instrument.permissions`. **Only request what you actually use** — users see these when installing.
 
-| Permission | What it unlocks |
-|------------|----------------|
-| `storage.properties` | Key-value storage |
-| `storage.files` | File read/write |
-| `storage.db` | SQLite queries |
-| `sessions` | Claude sessions (start, query, stream) |
-| `stages.read` | Read stage metadata |
-| `stages.observe` | Stage change events |
-| `connectors.read` | List connectors |
-| `connectors.credentials.read` | Read OAuth tokens |
-| `connectors.connect` | Initiate OAuth flow |
-
-## Background refresh
-
-For instruments that need periodic data updates, use `backgroundRefresh` in the manifest:
-
-```json
-{
-  "tango": {
-    "instrument": {
-      "backgroundRefresh": {
-        "intervalMs": 60000
-      }
-    }
-  }
-}
-```
-
-Then handle it in the backend:
-
-```ts
-export default defineBackend({
-  onBackgroundRefresh: async (ctx) => {
-    const data = await fetchLatestData();
-    ctx.emit({ event: "data.refreshed", payload: data });
-  },
-});
-```
+| Permission | When you need it |
+|------------|-----------------|
+| `storage.properties` | Persisting key-value data (settings, preferences, cached state) |
+| `storage.files` | Reading/writing files in instrument-scoped storage |
+| `storage.db` | SQLite database for structured data |
+| `sessions` | Starting Claude sessions, querying Claude, streaming responses |
+| `stages.read` | Reading which project/repo the user has active |
+| `stages.observe` | Reacting to project switches in real-time |
+| `connectors.read` | Checking if Slack/Jira are connected |
+| `connectors.credentials.read` | Accessing OAuth tokens to call external APIs |
+| `connectors.connect` | Triggering the OAuth flow for Slack/Jira |
 
 ## Settings
 
-Define user-configurable settings in `package.json`:
+When your instrument needs user configuration (API keys, preferences, limits), define a settings schema:
+
+```json
+// In package.json → tango.instrument
+"settings": [
+  { "key": "apiKey", "type": "string", "title": "API Key", "required": true, "secret": true },
+  { "key": "maxResults", "type": "number", "title": "Max Results", "default": 10, "min": 1, "max": 100 },
+  { "key": "enabled", "type": "boolean", "title": "Auto-refresh", "default": false },
+  { "key": "format", "type": "select", "title": "Output", "options": [{"value":"json","label":"JSON"},{"value":"csv","label":"CSV"}] }
+]
+```
+
+After changing settings, run `bun run sync` to regenerate `tango-env.d.ts` with typed keys.
+
+```tsx
+// Frontend — read settings
+const { values, setValue, loading } = useInstrumentSettings();
+if (values?.apiKey) { /* configured */ }
+```
+
+## Manifest quick reference
+
+The full manifest lives in `package.json` under `tango.instrument`:
 
 ```json
 {
   "tango": {
     "instrument": {
-      "settings": [
-        { "key": "apiKey", "type": "string", "title": "API Key", "required": true, "secret": true },
-        { "key": "count", "type": "number", "title": "Max Results", "default": 10, "min": 1, "max": 100 },
-        { "key": "enabled", "type": "boolean", "title": "Enable Feature", "default": false },
-        { "key": "format", "type": "select", "title": "Output Format", "options": [{"value":"json","label":"JSON"}] }
-      ]
+      "id": "my-instrument",           // Unique kebab-case ID
+      "name": "My Instrument",          // Display name in Tango UI
+      "description": "What it does",    // Shown in marketplace
+      "category": "developer-tools",    // developer-tools | productivity | media | communication | finance | utilities
+      "group": "Custom",                // Sidebar grouping
+      "runtime": "react",               // react | vanilla
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",  // Remove if no backend
+      "hostApiVersion": "2.0.0",
+      "launcher": {
+        "sidebarShortcut": { "enabled": true, "label": "My Tool", "icon": "puzzle", "order": 50 }
+      },
+      "panels": { "sidebar": true, "first": true, "second": false, "right": false },
+      "permissions": [],
+      "settings": []
     }
   }
 }
 ```
-
-Run `bun run sync` to regenerate `tango-env.d.ts` with typed setting keys.
-
-Read settings from frontend: `const { values, setValue } = useInstrumentSettings();`
 
 ## Dev workflow
 
 ```bash
-bun run dev       # Build + watch + hot-reload (connects to Tango on port 4243)
-bun run build     # One-off production build
-bun run validate  # Check manifest and project structure
+bun run dev       # Build + watch + hot-reload (Tango must be running on port 4243)
+bun run build     # One-off production build → dist/
+bun run validate  # Check manifest, entry points, permissions are valid
 bun run sync      # Regenerate tango-env.d.ts from settings schema
 ```
 
-Edits to `src/` auto-rebuild and hot-reload in Tango. Changes to `package.json` trigger a fresh `bun install` + rebuild.
+- Edits to `src/` auto-rebuild and hot-reload — no restart needed
+- Changes to `package.json` or lockfile trigger a fresh `bun install` + rebuild
+- Your instrument shows a `[dev]` badge in Tango's sidebar while dev mode is active
+
+## Distribution
+
+To share your instrument:
+
+1. Push to a GitHub repository
+2. Make sure `tango.json` exists at the repo root (already included in this template)
+3. Users add your repo as a source in Tango and install from the browse panel
