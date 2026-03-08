@@ -22,7 +22,48 @@ An instrument has two parts, both optional:
 
 1. **The frontend is dumb.** It renders UI and responds to user actions. It does NOT fetch data, poll, or run timers.
 2. **The backend is the brain.** It owns all data fetching, scheduling, and side effects. It pushes data to the frontend via events.
-3. **Every panel component must be wrapped in `<UIRoot>`.** This injects the Tango theme.
+3. **Panels cannot talk to each other directly.** Each panel slot (sidebar, first, second, right) is a separate React root — they share NO state. All panel-to-panel communication MUST go through the backend.
+4. **`api.emit()` (frontend) is ONLY for cross-instrument communication** — talking to OTHER instruments. To send data between your own panels, call a backend action, then have the backend use `ctx.emit()` to broadcast to all your panels.
+5. **Every panel component must be wrapped in `<UIRoot>`.** This injects the Tango theme.
+
+### Panel communication pattern (IMPORTANT)
+
+Panels cannot share React state. Use the backend as a hub:
+
+```
+Sidebar panel ──→ calls backend action ──→ Backend processes
+                                              │
+                                              ├── ctx.emit("items.loaded", { items })
+                                              │
+First panel ←── useHostEvent("instrument.event") listens
+Second panel ←── useHostEvent("instrument.event") listens
+```
+
+```tsx
+// Sidebar: user clicks an item → call backend action
+const selectItem = useInstrumentAction("selectItem");
+<UIListItem onClick={() => selectItem({ id: item.id })} />
+
+// Backend: fetch data and broadcast to all panels
+actions: {
+  selectItem: {
+    handler: async (ctx, input) => {
+      const detail = await fetchDetail(input.id);
+      ctx.emit({ event: "item.selected", payload: { detail } });
+      return { ok: true };
+    },
+  },
+},
+
+// First panel: listen for the event
+useHostEvent("instrument.event", useCallback((payload) => {
+  if (payload.event === "item.selected") {
+    setDetail(payload.payload.detail);
+  }
+}, []));
+```
+
+**NEVER use `api.emit()` to communicate between your own panels — it won't work.**
 
 ## Panel slots
 
